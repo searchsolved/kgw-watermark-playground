@@ -7,6 +7,8 @@ and its robustness follow-up ["On the Reliability of Watermarks for Large Langua
 Runs fully locally on facebook/opt-125m (CPU). No API keys, no network calls
 after the first model download.
 
+**Live app:** [llm-watermark-checker.streamlit.app](https://llm-watermark-checker.streamlit.app)
+
 ## What it does
 
 - **Generate & compare**: the same prompt with and without the watermark,
