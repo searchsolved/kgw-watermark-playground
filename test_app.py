@@ -48,6 +48,6 @@ buttons = {b.label: b for b in at.button}
 buttons["Run robustness sweeps"].click()
 at.run()
 assert not at.exception, at.exception
-assert len(at.dataframe) == 2
+assert len(at.dataframe) == 3
 print("robustness dataframes rendered:", len(at.dataframe))
 print("ALL APP TESTS PASSED")

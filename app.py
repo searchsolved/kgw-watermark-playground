@@ -287,17 +287,19 @@ verify yourself in the **Robustness** tab. Implementation:
 """
     )
 
-tab_gen, tab_detect, tab_robust = st.tabs(
-    ["1 · Generate & compare", "2 · Detect", "3 · Robustness"]
+tab_detect, tab_gen, tab_robust = st.tabs(
+    ["1 · Detect", "2 · Generate & compare", "3 · Attack the watermark"]
 )
 
 # ---------------------------------------------------------------- generate
 
 with tab_gen:
     st.markdown(
-        "Generate the **same continuation twice**, once normally and once with the "
-        "watermark, then compare. Green highlighting shows which tokens landed on "
-        "their step's green list."
+        "The watermark can only be embedded **while text is being generated**, so this "
+        "tab is the watermark factory. It generates the same continuation twice, once "
+        "normally and once with the watermark, then compares. Green highlighting shows "
+        "which tokens landed on their step's green list. Your watermarked output feeds "
+        "tabs 1 and 3."
     )
     prompt = st.text_area(
         "Prompt",
@@ -354,8 +356,14 @@ with tab_gen:
 
 with tab_detect:
     st.markdown(
-        "Score any text against the current watermark settings. Try a bundled sample, "
-        "or paste something of your own (results update when you click away from the box)."
+        "Score any text against the current watermark settings. Start with the bundled "
+        "watermarked sample for an instant positive, then try your own writing and watch "
+        "it score at exactly the chance rate: the detector has a calculable false positive "
+        "rate and essentially never accuses a human.\n\n"
+        "One thing this is **not**: an AI detector. Text pasted from ChatGPT, Claude or "
+        "Gemini will correctly come back *not detected*, because their outputs are not "
+        "watermarked with this scheme's key. Detection is a key check. To see a positive, "
+        "the watermark must be embedded at generation time (tab 2)."
     )
     b1, b2, b3 = st.columns(3)
     if b1.button("Load watermarked sample"):
@@ -379,15 +387,23 @@ with tab_detect:
             "robustness experiment."
         )
     else:
-        st.info("Load a sample above or paste some text to score it.")
+        st.info(
+            "Load a sample above, or paste anything: your own writing scores near "
+            "chance (that is the false-positive story), and chatbot output scores "
+            "near chance too, because nobody's public model carries this key."
+        )
 
 # ---------------------------------------------------------------- robustness
 
 with tab_robust:
     st.markdown(
-        "How much editing does the watermark survive? These sweeps take a watermarked "
-        "text, damage it progressively, and re-run detection at each step. The "
-        f"[reliability paper]({PAPER_RELIABILITY}) studies exactly this."
+        "How much damage does the watermark survive? These sweeps take a watermarked "
+        "text, attack it progressively, and re-run detection at each step. The "
+        f"[reliability paper]({PAPER_RELIABILITY}) studies exactly this.\n\n"
+        "The strongest attack in that paper is **paraphrasing with another LLM**, and "
+        "you can run it yourself right now: copy the watermarked text below, ask any "
+        "chatbot to paraphrase it, and paste the result into the Detect tab. Per-token "
+        "evidence weakens, but with enough tokens the signal often still accumulates."
     )
     if "marked" in st.session_state:
         source = st.session_state["marked"]
@@ -396,8 +412,10 @@ with tab_robust:
         source = (SAMPLES_DIR / "watermarked_default_settings.txt").read_text()
         st.caption(
             "Using the bundled watermarked sample (generated at default settings). "
-            "Generate your own in tab 1 to sweep that instead."
+            "Generate your own in tab 2 to sweep that instead."
         )
+    with st.expander("Show the text under attack"):
+        st.code(source, language=None, wrap_lines=True)
     if st.button("Run robustness sweeps", type="primary"):
         tokenizer, _ = load_model()
         ids = tokenizer(source, add_special_tokens=False)["input_ids"]
@@ -419,7 +437,19 @@ with tab_robust:
             rows.append({"frac": int(frac * 100), "z": sum(zs) / len(zs)})
         del_df = pd.DataFrame(rows)
 
-        col_l, col_r = st.columns(2)
+        rows = []
+        vocab_size = len(tokenizer)
+        for frac in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]:
+            zs = []
+            for _ in range(5):
+                swap = torch.rand(len(ids), generator=rng) < frac
+                rand_ids = torch.randint(0, vocab_size, (len(ids),), generator=rng)
+                attacked = [int(r) if m else t for t, m, r in zip(ids, swap.tolist(), rand_ids.tolist())]
+                zs.append(detect(tokenizer.decode(attacked), gamma, scheme, z_threshold, ignore_repeats)["z_score"])
+            rows.append({"frac": int(frac * 100), "z": sum(zs) / len(zs)})
+        repl_df = pd.DataFrame(rows)
+
+        col_l, col_m, col_r = st.columns(3)
         with col_l:
             st.subheader("Truncation")
             st.caption("Keep only the first N tokens. How short can a quote get and still convict?")
@@ -427,16 +457,27 @@ with tab_robust:
                 z_line_chart(trunc_df, "n:Q", "Tokens kept (from start)", z_threshold),
                 width="stretch",
             )
-        with col_r:
-            st.subheader("Random token deletion")
+        with col_m:
+            st.subheader("Random deletion")
             st.caption("Delete a growing share of tokens at random (mean of 5 trials per point).")
             st.altair_chart(
-                z_line_chart(del_df, "frac:Q", "% of tokens deleted (mean of 5 trials)", z_threshold),
+                z_line_chart(del_df, "frac:Q", "% of tokens deleted", z_threshold),
+                width="stretch",
+            )
+        with col_r:
+            st.subheader("Random replacement")
+            st.caption(
+                "Swap tokens for random ones. Each swap also corrupts the neighbouring "
+                "contexts, so this bites harder than deletion."
+            )
+            st.altair_chart(
+                z_line_chart(repl_df, "frac:Q", "% of tokens replaced", z_threshold),
                 width="stretch",
             )
         with st.expander("Data tables"):
             st.dataframe(trunc_df, hide_index=True)
             st.dataframe(del_df, hide_index=True)
+            st.dataframe(repl_df, hide_index=True)
 
 st.divider()
 st.caption(
