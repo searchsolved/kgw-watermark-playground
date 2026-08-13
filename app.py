@@ -403,9 +403,12 @@ with tab_detect:
         "it score at exactly the chance rate: the detector has a calculable false positive "
         "rate and essentially never accuses a human.\n\n"
         "One thing this is **not**: an AI detector. Text pasted from ChatGPT, Claude or "
-        "Gemini will correctly come back *not detected*, because their outputs are not "
-        "watermarked with this scheme's key. Detection is a key check. To see a positive, "
-        "the watermark must be embedded at generation time (tab 2)."
+        "Gemini will correctly come back *not detected* whatever marks it carries: Google "
+        "watermarks Gemini output with SynthID-Text, and "
+        "[Anthropic now watermarks new Claude models](https://support.claude.com/en/articles/16266773-how-claude-marks-ai-generated-content) "
+        "under the EU AI Act, but seeing any vendor's mark requires that vendor's own key "
+        "and scheme. Detection is a key check, and a negative is never evidence a text is "
+        "human. To see a positive here, the watermark must be embedded at generation time (tab 2)."
     )
     b1, b2, b3 = st.columns(3)
     if b1.button("Load watermarked sample"):
@@ -432,7 +435,7 @@ with tab_detect:
         st.info(
             "Load a sample above, or paste anything: your own writing scores near "
             "chance (that is the false-positive story), and chatbot output scores "
-            "near chance too, because nobody's public model carries this key."
+            "near chance too, because no public model carries this app's key."
         )
 
 # ---------------------------------------------------------------- robustness
