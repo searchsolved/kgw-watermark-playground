@@ -43,11 +43,24 @@ assert any("settings" in str(w.value).lower() for w in at.warning), "mismatch wa
 at.sidebar.slider[0].set_value(0.25)
 at.run()
 
-# --- tab 3: robustness sweeps
+# --- tab 3: robustness sweeps incl. dilution
 buttons = {b.label: b for b in at.button}
 buttons["Run robustness sweeps"].click()
 at.run()
 assert not at.exception, at.exception
-assert len(at.dataframe) == 3
-print("robustness dataframes rendered:", len(at.dataframe))
+assert len(at.dataframe) == 4
+dil = at.session_state["sweeps"]["dil"]
+win = dil[dil.method.str.startswith("Window")]
+full = dil[dil.method == "Whole document"]
+assert win.z.min() > 4, f"WinMax should stay above threshold, got {win.z.min():.2f}"
+assert full.z.min() < 4, f"whole-doc z should dilute below threshold, got {full.z.min():.2f}"
+print(f"dilution ok: whole-doc z falls to {full.z.min():.2f}, WinMax holds at {win.z.min():.2f}")
+
+# --- paraphrase before/after box scores both sides
+metrics_before = len(at.metric)
+at.text_area(key="para_text").set_value(open("samples/human_control.txt").read())
+at.run()
+assert not at.exception, at.exception
+assert len(at.metric) >= metrics_before + 6, "paraphrase comparison metrics missing"
+print("paraphrase comparison rendered")
 print("ALL APP TESTS PASSED")

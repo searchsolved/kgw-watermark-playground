@@ -15,8 +15,11 @@ after the first model download.
 - **Detect**: score any text instantly. Bundled samples (a watermarked
   generation and a human-written control) work with one click, no generation
   needed. Edit the text and re-score for a hands-on robustness experiment.
-- **Robustness**: truncation and random-deletion sweeps showing how the
-  z-score degrades under editing, on your generation or the bundled sample.
+- **Attack the watermark**: truncation, random-deletion and random-replacement
+  sweeps; a dilution demo hiding a 60-token watermarked snippet in unwatermarked
+  prose (whole-document scoring dilutes below threshold, the WinMax sliding
+  window still finds the span); and a bring-your-own-chatbot paraphrase attack
+  with a side-by-side before/after comparison.
 
 Changing gamma or the seeding scheme after generating shows detection
 collapse, which is the scheme's key property: without the exact key there

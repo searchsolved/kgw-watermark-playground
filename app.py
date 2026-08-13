@@ -37,6 +37,7 @@ AUTHOR_URL = "https://leefoot.com"
 
 # Chart / highlight colours (validated reference palette from the dataviz method)
 SERIES_BLUE = "#2a78d6"
+SERIES_ORANGE = "#eb6834"
 GREEN = "#008300"
 TEXT_SECONDARY = "#52514e"
 
@@ -81,7 +82,7 @@ def generate(prompt, watermark, gamma, delta, scheme, temperature, top_p, max_ne
 
 
 @st.cache_data(show_spinner=False)
-def detect(text, gamma, scheme, z_threshold, ignore_repeats):
+def detect(text, gamma, scheme, z_threshold, ignore_repeats, window_size=None):
     tokenizer, _ = load_model()
     detector = WatermarkDetector(
         vocab=list(tokenizer.get_vocab().values()),
@@ -93,6 +94,10 @@ def detect(text, gamma, scheme, z_threshold, ignore_repeats):
         normalizers=[],
         ignore_repeated_ngrams=ignore_repeats,
     )
+    if window_size is not None:
+        score = detector.detect(text, window_size=window_size)
+        score["z_score"] = float(score["z_score"])
+        return score
     return detector.detect(text, return_green_token_mask=True)
 
 
@@ -187,6 +192,43 @@ def z_line_chart(df, x_field, x_title, z_threshold):
         .encode(y="z:Q", text="t:N")
     )
     return (line + rule + label).properties(height=280)
+
+
+def dilution_chart(df, z_threshold):
+    base = alt.Chart(df).encode(
+        x=alt.X(
+            "share:Q",
+            title="Watermarked share of the document (%)",
+            scale=alt.Scale(reverse=True),
+        ),
+        y=alt.Y("z:Q", title="Detection z-score"),
+        color=alt.Color(
+            "method:N",
+            title=None,
+            scale=alt.Scale(
+                domain=["Whole document", "Windowed (WinMax)"],
+                range=[SERIES_BLUE, SERIES_ORANGE],
+            ),
+            legend=alt.Legend(orient="top"),
+        ),
+        tooltip=[
+            alt.Tooltip("method:N", title="Method"),
+            alt.Tooltip("share:Q", title="Watermarked share %"),
+            alt.Tooltip("z:Q", format=".2f"),
+        ],
+    )
+    line = base.mark_line(strokeWidth=2) + base.mark_point(size=70, filled=True)
+    rule = (
+        alt.Chart(pd.DataFrame({"z": [z_threshold]}))
+        .mark_rule(color=TEXT_SECONDARY, strokeDash=[4, 4])
+        .encode(y="z:Q")
+    )
+    label = (
+        alt.Chart(pd.DataFrame({"z": [z_threshold], "t": [f"detection threshold z = {z_threshold}"]}))
+        .mark_text(align="left", dx=4, dy=-6, color=TEXT_SECONDARY)
+        .encode(y="z:Q", text="t:N")
+    )
+    return (line + rule + label).properties(height=300)
 
 
 # ---------------------------------------------------------------- sidebar
@@ -420,48 +462,72 @@ with tab_robust:
         tokenizer, _ = load_model()
         ids = tokenizer(source, add_special_tokens=False)["input_ids"]
 
-        rows = []
-        for n in range(20, len(ids) + 1, max(10, len(ids) // 10)):
-            s = detect(tokenizer.decode(ids[:n]), gamma, scheme, z_threshold, ignore_repeats)
-            rows.append({"n": n, "z": s["z_score"]})
-        trunc_df = pd.DataFrame(rows)
+        with st.status("Running truncation, deletion, replacement and dilution sweeps...", expanded=False):
+            rows = []
+            for n in range(20, len(ids) + 1, max(10, len(ids) // 10)):
+                s = detect(tokenizer.decode(ids[:n]), gamma, scheme, z_threshold, ignore_repeats)
+                rows.append({"n": n, "z": s["z_score"]})
+            trunc_df = pd.DataFrame(rows)
 
-        rng = torch.Generator().manual_seed(0)
-        rows = []
-        for frac in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]:
-            zs = []
-            for _ in range(5):
-                keep = torch.rand(len(ids), generator=rng) > frac
-                kept = [t for t, k in zip(ids, keep.tolist()) if k]
-                zs.append(detect(tokenizer.decode(kept), gamma, scheme, z_threshold, ignore_repeats)["z_score"])
-            rows.append({"frac": int(frac * 100), "z": sum(zs) / len(zs)})
-        del_df = pd.DataFrame(rows)
+            rng = torch.Generator().manual_seed(0)
+            rows = []
+            for frac in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]:
+                zs = []
+                for _ in range(5):
+                    keep = torch.rand(len(ids), generator=rng) > frac
+                    kept = [t for t, k in zip(ids, keep.tolist()) if k]
+                    zs.append(detect(tokenizer.decode(kept), gamma, scheme, z_threshold, ignore_repeats)["z_score"])
+                rows.append({"frac": int(frac * 100), "z": sum(zs) / len(zs)})
+            del_df = pd.DataFrame(rows)
 
-        rows = []
-        vocab_size = len(tokenizer)
-        for frac in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]:
-            zs = []
-            for _ in range(5):
-                swap = torch.rand(len(ids), generator=rng) < frac
-                rand_ids = torch.randint(0, vocab_size, (len(ids),), generator=rng)
-                attacked = [int(r) if m else t for t, m, r in zip(ids, swap.tolist(), rand_ids.tolist())]
-                zs.append(detect(tokenizer.decode(attacked), gamma, scheme, z_threshold, ignore_repeats)["z_score"])
-            rows.append({"frac": int(frac * 100), "z": sum(zs) / len(zs)})
-        repl_df = pd.DataFrame(rows)
+            rows = []
+            vocab_size = len(tokenizer)
+            for frac in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]:
+                zs = []
+                for _ in range(5):
+                    swap = torch.rand(len(ids), generator=rng) < frac
+                    rand_ids = torch.randint(0, vocab_size, (len(ids),), generator=rng)
+                    attacked = [int(r) if m else t for t, m, r in zip(ids, swap.tolist(), rand_ids.tolist())]
+                    zs.append(detect(tokenizer.decode(attacked), gamma, scheme, z_threshold, ignore_repeats)["z_score"])
+                rows.append({"frac": int(frac * 100), "z": sum(zs) / len(zs)})
+            repl_df = pd.DataFrame(rows)
 
+            insert_ids = ids[: min(60, len(ids))]
+            insert_text = tokenizer.decode(insert_ids)
+            filler_ids = tokenizer(
+                (SAMPLES_DIR / "unwatermarked_filler.txt").read_text(), add_special_tokens=False
+            )["input_ids"]
+            rows = []
+            for n_fill in [0, 60, 130, 260, 390, 520]:
+                pre = tokenizer.decode(filler_ids[: n_fill // 2])
+                post = tokenizer.decode(filler_ids[n_fill // 2 : n_fill])
+                doc = (pre + " " + insert_text + " " + post).strip()
+                share = round(100 * len(insert_ids) / (len(insert_ids) + n_fill))
+                z_full = detect(doc, gamma, scheme, z_threshold, ignore_repeats)["z_score"]
+                z_win = detect(doc, gamma, scheme, z_threshold, ignore_repeats, window_size="max")["z_score"]
+                rows.append({"share": share, "z": z_full, "method": "Whole document"})
+                rows.append({"share": share, "z": z_win, "method": "Windowed (WinMax)"})
+            dil_df = pd.DataFrame(rows)
+
+        st.session_state["sweeps"] = {
+            "trunc": trunc_df, "del": del_df, "repl": repl_df, "dil": dil_df
+        }
+
+    if "sweeps" in st.session_state:
+        sw = st.session_state["sweeps"]
         col_l, col_m, col_r = st.columns(3)
         with col_l:
             st.subheader("Truncation")
             st.caption("Keep only the first N tokens. How short can a quote get and still convict?")
             st.altair_chart(
-                z_line_chart(trunc_df, "n:Q", "Tokens kept (from start)", z_threshold),
+                z_line_chart(sw["trunc"], "n:Q", "Tokens kept (from start)", z_threshold),
                 width="stretch",
             )
         with col_m:
             st.subheader("Random deletion")
             st.caption("Delete a growing share of tokens at random (mean of 5 trials per point).")
             st.altair_chart(
-                z_line_chart(del_df, "frac:Q", "% of tokens deleted", z_threshold),
+                z_line_chart(sw["del"], "frac:Q", "% of tokens deleted", z_threshold),
                 width="stretch",
             )
         with col_r:
@@ -471,13 +537,61 @@ with tab_robust:
                 "contexts, so this bites harder than deletion."
             )
             st.altair_chart(
-                z_line_chart(repl_df, "frac:Q", "% of tokens replaced", z_threshold),
+                z_line_chart(sw["repl"], "frac:Q", "% of tokens replaced", z_threshold),
                 width="stretch",
             )
+
+        st.subheader("Dilution: hiding a watermarked quote in unwatermarked text")
+        st.markdown(
+            "The realistic case is not a fully watermarked document but a **watermarked "
+            "passage inside ordinary text**, such as one generated paragraph in an "
+            "otherwise self-written article. Here a 60-token watermarked snippet is "
+            "buried in growing amounts of unwatermarked prose. Scoring the whole "
+            "document dilutes the signal below the threshold, but a **sliding-window "
+            "scan (WinMax, from the reliability paper)** hunts for the hottest span "
+            "and keeps convicting."
+        )
+        st.altair_chart(dilution_chart(sw["dil"], z_threshold), width="stretch")
+
         with st.expander("Data tables"):
-            st.dataframe(trunc_df, hide_index=True)
-            st.dataframe(del_df, hide_index=True)
-            st.dataframe(repl_df, hide_index=True)
+            st.dataframe(sw["trunc"], hide_index=True)
+            st.dataframe(sw["del"], hide_index=True)
+            st.dataframe(sw["repl"], hide_index=True)
+            st.dataframe(sw["dil"], hide_index=True)
+
+    st.divider()
+    st.subheader("Paraphrase attack (bring your own chatbot)")
+    st.markdown(
+        "The strongest known attack needs another LLM. Copy the text under attack "
+        "above, ask any chatbot to paraphrase it, and paste the result here."
+    )
+    para = st.text_area("Paraphrased version", height=140, key="para_text")
+    if para and para.strip():
+        orig_score = detect(source, gamma, scheme, z_threshold, ignore_repeats)
+        para_score = detect(para, gamma, scheme, z_threshold, ignore_repeats)
+        col_o, col_p = st.columns(2)
+        with col_o:
+            st.markdown("**Original watermarked text**")
+            verdict_banner(orig_score, z_threshold)
+            score_metrics(orig_score, gamma)
+        with col_p:
+            st.markdown("**Your paraphrase**")
+            verdict_banner(para_score, z_threshold)
+            score_metrics(para_score, gamma)
+        if orig_score["z_score"] > 0:
+            retained = max(0.0, para_score["z_score"] / orig_score["z_score"] * 100)
+            if para_score["prediction"]:
+                st.caption(
+                    f"The paraphrase retains {retained:.0f}% of the original z-score and "
+                    "is still detected. Per-token evidence weakened, but enough survived."
+                )
+            else:
+                st.caption(
+                    f"The paraphrase retains {retained:.0f}% of the original z-score and "
+                    "drops below the threshold at this length. The reliability paper's "
+                    "finding is that evidence re-accumulates with length, so longer "
+                    "paraphrased texts become detectable again."
+                )
 
 st.divider()
 st.caption(
