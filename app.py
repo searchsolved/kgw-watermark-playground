@@ -68,7 +68,16 @@ def generate(prompt, watermark, gamma, delta, scheme, temperature, top_p, max_ne
     tokenizer, model = load_model()
     torch.manual_seed(seed)
     inputs = tokenizer(prompt, return_tensors="pt").to(DEVICE)
-    kwargs = dict(do_sample=True, temperature=temperature, top_p=top_p, max_new_tokens=max_new)
+    # no_repeat_ngram_size / repetition_penalty: opt-125m falls into verbatim
+    # repetition loops without them
+    kwargs = dict(
+        do_sample=True,
+        temperature=temperature,
+        top_p=top_p,
+        max_new_tokens=max_new,
+        no_repeat_ngram_size=3,
+        repetition_penalty=1.2,
+    )
     if watermark:
         processor = WatermarkLogitsProcessor(
             vocab=list(tokenizer.get_vocab().values()),
@@ -78,7 +87,9 @@ def generate(prompt, watermark, gamma, delta, scheme, temperature, top_p, max_ne
         )
         kwargs["logits_processor"] = LogitsProcessorList([processor])
     out = model.generate(**inputs, **kwargs)
-    return tokenizer.decode(out[0, inputs["input_ids"].shape[-1] :], skip_special_tokens=True)
+    text = tokenizer.decode(out[0, inputs["input_ids"].shape[-1] :], skip_special_tokens=True)
+    # the max-token cap can cut generation mid-character, leaving a trailing U+FFFD
+    return text.rstrip("�")
 
 
 @st.cache_data(show_spinner=False)
@@ -152,23 +163,35 @@ def highlight_legend():
 
 
 def token_highlight_html(text, score):
-    """Tokens with green-list hits get a tint AND an underline (never colour alone)."""
+    """Tokens with green-list hits get a tint AND an underline (never colour alone).
+
+    A multi-byte character can span several BPE tokens and decode to U+FFFD in
+    isolation, so tokens are grouped until they decode cleanly; a group is only
+    highlighted when every token in it was green.
+    """
     tokenizer, _ = load_model()
     ids = tokenizer(text, add_special_tokens=False)["input_ids"]
     mask = score.get("green_token_mask", [])
     prefix = len(ids) - len(mask)  # leading context tokens carry no verdict
     spans = []
-    for i, tok_id in enumerate(ids):
-        piece = tokenizer.decode([tok_id])
+    i = 0
+    while i < len(ids):
+        j = i + 1
+        piece = tokenizer.decode(ids[i:j])
+        while "�" in piece and j < len(ids) and j - i < 6:
+            j += 1
+            piece = tokenizer.decode(ids[i:j])
         piece = piece.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        if i < prefix:
+        idxs = range(i, j)
+        if all(k < prefix for k in idxs):
             spans.append(f'<span style="color:{TEXT_SECONDARY}">{piece}</span>')
-        elif mask[i - prefix]:
+        elif all(k >= prefix and mask[k - prefix] for k in idxs):
             spans.append(
                 f'<span style="background:{GREEN}22;border-bottom:2px solid {GREEN}">{piece}</span>'
             )
         else:
             spans.append(f"<span>{piece}</span>")
+        i = j
     return f'<div style="line-height:1.9">{"".join(spans)}</div>'
 
 

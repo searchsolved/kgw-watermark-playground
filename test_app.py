@@ -36,6 +36,23 @@ zlabels = [m.label for m in at.metric]
 assert zlabels.count("z-score") >= 2, zlabels
 print("compare metrics rendered:", [(m.label, m.value) for m in at.metric[:3]])
 
+# anti-repetition params: no verbatim loops, watermark still detected
+assert any("Watermark detected" in str(s.value) for s in at.success), "generated watermark not detected"
+marked = at.session_state["marked"]
+frags = [marked[i : i + 20] for i in range(0, len(marked) - 40, 40)]
+assert len(set(frags)) > len(frags) * 0.6, "generation still looping"
+compare_html = "".join(str(el.value) for el in at.markdown if "line-height:1.9" in str(el.value))
+assert "�" not in compare_html, "mojibake in compare highlight"
+print("generation quality ok: no loops, no mojibake, still detected")
+
+# highlighter handles multi-byte characters spanning several BPE tokens
+at.text_area(key="detect_text").set_value("He said “watermarks” are naïve… 水印 \U0001f58b️ test")
+at.run()
+assert not at.exception, at.exception
+uni_html = [str(el.value) for el in at.markdown if "line-height:1.9" in str(el.value)]
+assert uni_html and "�" not in uni_html[-1], "mojibake in unicode highlight"
+print("unicode highlight decode ok")
+
 # settings-mismatch warning appears when gamma changes after generation
 at.sidebar.slider[0].set_value(0.4)
 at.run()
