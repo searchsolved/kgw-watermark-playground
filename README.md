@@ -10,11 +10,17 @@ after the first model download.
 ## What it does
 
 - **Generate & compare**: the same prompt with and without the watermark,
-  with detection stats (z-score, green token fraction, p-value) under each.
-- **Detect**: paste any text and score it; tokens that landed on their step's
-  green list are highlighted.
+  side by side, with per-token green-list highlighting and detection stats
+  (z-score, green token fraction) under each.
+- **Detect**: score any text instantly. Bundled samples (a watermarked
+  generation and a human-written control) work with one click, no generation
+  needed. Edit the text and re-score for a hands-on robustness experiment.
 - **Robustness**: truncation and random-deletion sweeps showing how the
-  z-score degrades under editing.
+  z-score degrades under editing, on your generation or the bundled sample.
+
+Changing gamma or the seeding scheme after generating shows detection
+collapse, which is the scheme's key property: without the exact key there
+is nothing to test.
 
 Sidebar controls expose gamma (green list fraction), delta (logit boost),
 the seeding scheme, sampling settings, and the detection threshold.
@@ -40,3 +46,8 @@ that `robustness_play.py` attacks).
   implementation, [jwkirchenbauer/lm-watermarking](https://github.com/jwkirchenbauer/lm-watermarking)
   (Apache 2.0, license preserved in that directory). All watermarking and
   detection logic is theirs; this repo just wraps a UI around it.
+- `samples/` holds a watermarked generation made at the default settings
+  (gamma 0.25, delta 2.0, selfhash, seed 42) and a human-written control,
+  so the Detect tab works without waiting for a generation.
+
+Built by [Lee Foot](https://leefoot.com).
