@@ -1,0 +1,6 @@
+venv/
+__pycache__/
+*.log
+wm_output.txt
+blog-post-draft.md
+.DS_Store
