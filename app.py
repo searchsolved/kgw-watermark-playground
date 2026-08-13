@@ -257,61 +257,65 @@ def dilution_chart(df, z_threshold):
 # ---------------------------------------------------------------- sidebar
 
 st.sidebar.title("Settings")
-st.sidebar.subheader("Watermark")
-gamma = st.sidebar.slider(
-    "gamma (green list fraction)",
-    0.1,
-    0.5,
-    0.25,
-    0.05,
-    help="Fraction of the vocabulary placed on the green list at each step. "
-    "Detection compares the observed green fraction against this chance baseline.",
-)
 delta = st.sidebar.slider(
-    "delta (green logit boost)",
+    "Watermark strength (delta)",
     0.5,
     10.0,
     2.0,
     0.5,
-    help="How hard generation is pushed toward green tokens. Higher = stronger, "
-    "easier-to-detect watermark, but push it far enough and text quality degrades. "
-    "Try 8+ to see the trade-off.",
+    help="How hard generation is pushed toward green-list tokens. 2.0 is the papers' "
+    "recommended balance. Higher = easier to detect but worse text; try 8+ to see "
+    "the trade-off.",
 )
-scheme = st.sidebar.selectbox(
-    "Seeding scheme",
-    ["selfhash", "simple_1", "minhash"],
-    index=0,
-    help="How each step's green list is seeded from the preceding tokens. "
-    "The detector must use the same scheme (and gamma) as the generator. "
-    "selfhash is the papers' recommendation.",
-)
-z_threshold = st.sidebar.slider(
-    "Detection z threshold",
-    2.0,
-    6.0,
-    4.0,
-    0.5,
-    help="Significance bar for calling a text watermarked. z = 4 corresponds to a "
-    "false positive rate of roughly 3 in 100,000.",
-)
-ignore_repeats = st.sidebar.checkbox(
-    "Ignore repeated ngrams when scoring",
-    value=True,
-    help="Score each unique token context once, so repetitive text cannot inflate "
-    "the evidence. Recommended by the reliability paper.",
-)
-st.sidebar.subheader("Generation")
-temperature = st.sidebar.slider("Temperature", 0.1, 1.5, 0.7, 0.1)
-top_p = st.sidebar.slider("top_p", 0.5, 1.0, 0.95, 0.05)
 max_new = st.sidebar.slider(
-    "Max new tokens",
+    "Generation length (tokens)",
     50,
     400,
     200,
     25,
     help="More tokens = slower generation but stronger detection evidence.",
 )
-seed = st.sidebar.number_input("Sampling seed", value=42, step=1)
+with st.sidebar.expander("Advanced settings"):
+    st.caption(
+        "Defaults are the papers' recommended values, and the bundled samples were "
+        "generated with them. Changing gamma or the seeding scheme breaks detection "
+        "of the samples, which is itself the key lesson."
+    )
+    gamma = st.slider(
+        "gamma (green list fraction)",
+        0.1,
+        0.5,
+        0.25,
+        0.05,
+        help="Fraction of the vocabulary placed on the green list at each step. "
+        "Detection compares the observed green fraction against this chance baseline.",
+    )
+    scheme = st.selectbox(
+        "Seeding scheme",
+        ["selfhash", "simple_1", "minhash"],
+        index=0,
+        help="How each step's green list is seeded from the preceding tokens. "
+        "The detector must use the same scheme (and gamma) as the generator. "
+        "selfhash is the papers' recommendation.",
+    )
+    z_threshold = st.slider(
+        "Detection z threshold",
+        2.0,
+        6.0,
+        4.0,
+        0.5,
+        help="Significance bar for calling a text watermarked. z = 4 corresponds to a "
+        "false positive rate of roughly 3 in 100,000.",
+    )
+    ignore_repeats = st.checkbox(
+        "Ignore repeated ngrams when scoring",
+        value=True,
+        help="Score each unique token context once, so repetitive text cannot inflate "
+        "the evidence. Recommended by the reliability paper.",
+    )
+    temperature = st.slider("Temperature", 0.1, 1.5, 0.7, 0.1)
+    top_p = st.slider("top_p", 0.5, 1.0, 0.95, 0.05)
+    seed = st.number_input("Sampling seed", value=42, step=1)
 st.sidebar.divider()
 st.sidebar.caption(
     f"Papers: [A Watermark for Large Language Models]({PAPER_MAIN}) · "
@@ -436,42 +440,49 @@ with tab_detect:
     b1, b2, b3 = st.columns(3)
     if b1.button("Load watermarked sample"):
         st.session_state["detect_text"] = (SAMPLES_DIR / "watermarked_default_settings.txt").read_text()
+        st.session_state["detect_scored"] = st.session_state["detect_text"]
     if b2.button("Load human-written sample"):
         st.session_state["detect_text"] = (SAMPLES_DIR / "human_control.txt").read_text()
+        st.session_state["detect_scored"] = st.session_state["detect_text"]
     if b3.button("Use my last generation", disabled="marked" not in st.session_state):
         st.session_state["detect_text"] = st.session_state["marked"]
-    text_in = st.text_area("Text to score", height=170, key="detect_text")
-    if text_in and text_in.strip():
-        score = detect(text_in, gamma, scheme, z_threshold, ignore_repeats)
+        st.session_state["detect_scored"] = st.session_state["detect_text"]
+    with st.form("detect_form", border=False):
+        text_in = st.text_area("Text to score", height=170, key="detect_text")
+        detect_submitted = st.form_submit_button("Score this text", type="primary")
+    if detect_submitted and text_in.strip():
+        st.session_state["detect_scored"] = text_in
+    scored_text = st.session_state.get("detect_scored", "")
+    if scored_text.strip():
+        score = detect(scored_text, gamma, scheme, z_threshold, ignore_repeats)
         verdict_banner(score, z_threshold)
         score_metrics(score, gamma)
         highlight_legend()
-        st.markdown(token_highlight_html(text_in, score), unsafe_allow_html=True)
+        st.markdown(token_highlight_html(scored_text, score), unsafe_allow_html=True)
         st.caption(
             "The bundled watermarked sample was generated at the default settings "
             "(gamma 0.25, delta 2.0, selfhash). Change gamma or the seeding scheme in "
-            "the sidebar and watch detection collapse: without the exact key there is "
-            "nothing to test. Editing the text above and re-scoring is a hands-on "
-            "robustness experiment."
+            "Advanced settings and watch detection collapse: without the exact key "
+            "there is nothing to test. Editing the text above and re-scoring is a "
+            "hands-on robustness experiment."
         )
     else:
         st.info(
-            "Load a sample above, or paste anything: your own writing scores near "
-            "chance (that is the false-positive story), and chatbot output scores "
-            "near chance too, because no public model carries this app's key."
+            "Load a sample above, or paste anything and hit Score: your own writing "
+            "scores near chance (that is the false-positive story), and chatbot output "
+            "scores near chance too, because no public model carries this app's key."
         )
 
 # ---------------------------------------------------------------- robustness
 
 with tab_robust:
     st.markdown(
-        "How much damage does the watermark survive? These sweeps take a watermarked "
-        "text, attack it progressively, and re-run detection at each step. The "
-        f"[reliability paper]({PAPER_RELIABILITY}) studies exactly this.\n\n"
-        "The strongest attack in that paper is **paraphrasing with another LLM**, and "
-        "you can run it yourself right now: copy the watermarked text below, ask any "
-        "chatbot to paraphrase it, and paste the result into the Detect tab. Per-token "
-        "evidence weakens, but with enough tokens the signal often still accumulates."
+        "**Could someone scrub the watermark before publishing?** This tab attacks real "
+        "watermarked text four ways and reports exactly where detection breaks: how short "
+        "a quote can get, how much editing it survives, and whether burying it in other "
+        f"text hides it. The [reliability paper]({PAPER_RELIABILITY}) studies the same "
+        "attacks at scale; here you run them on your own text. The strongest known "
+        "attack, paraphrasing with another LLM, is at the bottom."
     )
     if "marked" in st.session_state:
         source = st.session_state["marked"]
@@ -484,7 +495,7 @@ with tab_robust:
         )
     with st.expander("Show the text under attack"):
         st.code(source, language=None, wrap_lines=True)
-    if st.button("Run robustness sweeps", type="primary"):
+    if st.button("Attack this text", type="primary"):
         tokenizer, _ = load_model()
         ids = tokenizer(source, add_special_tokens=False)["input_ids"]
 
@@ -541,42 +552,88 @@ with tab_robust:
 
     if "sweeps" in st.session_state:
         sw = st.session_state["sweeps"]
+
+        det_ns = sw["trunc"][sw["trunc"].z > z_threshold]["n"]
+        min_n = int(det_ns.min()) if len(det_ns) else None
+        del_ok = sw["del"][sw["del"].z > z_threshold]["frac"]
+        max_del = int(del_ok.max()) if len(del_ok) else None
+        repl_ok = sw["repl"][sw["repl"].z > z_threshold]["frac"]
+        max_repl = int(repl_ok.max()) if len(repl_ok) else None
+        dil = sw["dil"]
+        whole_ok = dil[(dil.method == "Whole document") & (dil.z > z_threshold)]["share"]
+        win_ok = dil[(dil.method != "Whole document") & (dil.z > z_threshold)]["share"]
+        whole_min = int(whole_ok.min()) if len(whole_ok) else None
+        win_min = int(win_ok.min()) if len(win_ok) else None
+
+        if min_n is not None and max_del is not None and max_repl is not None and win_min is not None:
+            st.success(
+                f"**Verdict: this watermark is hard to scrub.** It convicts from just "
+                f"{min_n} tokens, survives up to {max_del}% random deletion and "
+                f"{max_repl}% random replacement, and a windowed scan still finds it "
+                f"when it makes up only {win_min}% of a larger document."
+            )
+        else:
+            st.warning(
+                "**Verdict: this watermark is fragile under attack.** At least one "
+                "attack broke detection entirely; the charts below show where. A longer "
+                "generation or a higher watermark strength (delta) would harden it."
+            )
+
         col_l, col_m, col_r = st.columns(3)
         with col_l:
             st.subheader("Truncation")
-            st.caption("Keep only the first N tokens. How short can a quote get and still convict?")
+            st.metric(
+                "Convicts from",
+                f"{min_n} tokens" if min_n is not None else "never",
+                help="The shortest opening excerpt that still crosses the detection threshold.",
+            )
+            st.caption("Scenario: someone quotes only a snippet of the text.")
             st.altair_chart(
                 z_line_chart(sw["trunc"], "n:Q", "Tokens kept (from start)", z_threshold),
                 width="stretch",
             )
         with col_m:
             st.subheader("Random deletion")
-            st.caption("Delete a growing share of tokens at random (mean of 5 trials per point).")
+            st.metric(
+                "Survives deletion up to",
+                f"{max_del}%" if max_del is not None else "0%",
+                help="The largest tested share of tokens deleted at random with detection intact (mean of 5 trials).",
+            )
+            st.caption("Scenario: words hacked out during editing.")
             st.altair_chart(
                 z_line_chart(sw["del"], "frac:Q", "% of tokens deleted", z_threshold),
                 width="stretch",
             )
         with col_r:
             st.subheader("Random replacement")
-            st.caption(
-                "Swap tokens for random ones. Each swap also corrupts the neighbouring "
-                "contexts, so this bites harder than deletion."
+            st.metric(
+                "Survives replacement up to",
+                f"{max_repl}%" if max_repl is not None else "0%",
+                help="The largest tested share of tokens swapped for random ones with detection intact. Each swap also corrupts neighbouring contexts, so this bites harder than deletion.",
             )
+            st.caption("Scenario: crude word-swapping to dodge detection.")
             st.altair_chart(
                 z_line_chart(sw["repl"], "frac:Q", "% of tokens replaced", z_threshold),
                 width="stretch",
             )
 
-        st.subheader("Dilution: hiding a watermarked quote in unwatermarked text")
-        st.markdown(
-            "The realistic case is not a fully watermarked document but a **watermarked "
-            "passage inside ordinary text**, such as one generated paragraph in an "
-            "otherwise self-written article. Here a 60-token watermarked snippet is "
-            "buried in growing amounts of unwatermarked prose. Scoring the whole "
-            "document dilutes the signal below the threshold, but a **sliding-window "
-            "scan (WinMax, from the reliability paper)** hunts for the hottest span "
-            "and keeps convicting."
-        )
+        st.subheader("Dilution: hiding a watermarked quote in a larger document")
+        if win_min is not None and whole_min is not None and win_min < whole_min:
+            st.markdown(
+                f"**Scoring the whole document stops working once the watermarked snippet "
+                f"falls below {whole_min}% of it; the windowed scan (WinMax) still convicts "
+                f"at {win_min}%.** Scenario: one generated paragraph pasted into an "
+                "otherwise self-written article. A 60-token watermarked snippet is buried "
+                "in growing amounts of unwatermarked prose; naive scanning dilutes away, "
+                "the sliding window hunts for the hottest span."
+            )
+        else:
+            st.markdown(
+                "Scenario: one generated paragraph pasted into an otherwise self-written "
+                "article. A 60-token watermarked snippet is buried in growing amounts of "
+                "unwatermarked prose, scored two ways: whole-document and a sliding "
+                "window (WinMax) that hunts for the hottest span."
+            )
         st.altair_chart(dilution_chart(sw["dil"], z_threshold), width="stretch")
 
         with st.expander("Data tables"):
@@ -591,10 +648,15 @@ with tab_robust:
         "The strongest known attack needs another LLM. Copy the text under attack "
         "above, ask any chatbot to paraphrase it, and paste the result here."
     )
-    para = st.text_area("Paraphrased version", height=140, key="para_text")
-    if para and para.strip():
+    with st.form("para_form", border=False):
+        para = st.text_area("Paraphrased version", height=140, key="para_text")
+        para_submitted = st.form_submit_button("Score my paraphrase", type="primary")
+    if para_submitted and para.strip():
+        st.session_state["para_scored"] = para
+    para_scored = st.session_state.get("para_scored", "")
+    if para_scored.strip():
         orig_score = detect(source, gamma, scheme, z_threshold, ignore_repeats)
-        para_score = detect(para, gamma, scheme, z_threshold, ignore_repeats)
+        para_score = detect(para_scored, gamma, scheme, z_threshold, ignore_repeats)
         col_o, col_p = st.columns(2)
         with col_o:
             st.markdown("**Original watermarked text**")

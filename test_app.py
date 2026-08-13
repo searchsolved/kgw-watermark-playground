@@ -5,8 +5,8 @@ at.run()
 assert not at.exception, at.exception
 
 # shrink generation for test speed: sidebar sliders
-# 0 gamma, 1 delta, 2 z_threshold, 3 temperature, 4 top_p, 5 max_new
-at.sidebar.slider[5].set_value(80)
+# 0 delta, 1 max_new, then advanced: 2 gamma, 3 z_threshold, 4 temperature, 5 top_p
+at.sidebar.slider[1].set_value(80)
 at.run()
 
 # --- tab 2: bundled sample detects with no generation needed
@@ -47,6 +47,8 @@ print("generation quality ok: no loops, no mojibake, still detected")
 
 # highlighter handles multi-byte characters spanning several BPE tokens
 at.text_area(key="detect_text").set_value("He said “watermarks” are naïve… 水印 \U0001f58b️ test")
+buttons = {b.label: b for b in at.button}
+buttons["Score this text"].click()
 at.run()
 assert not at.exception, at.exception
 uni_html = [str(el.value) for el in at.markdown if "line-height:1.9" in str(el.value)]
@@ -54,15 +56,15 @@ assert uni_html and "�" not in uni_html[-1], "mojibake in unicode highlight"
 print("unicode highlight decode ok")
 
 # settings-mismatch warning appears when gamma changes after generation
-at.sidebar.slider[0].set_value(0.4)
+at.sidebar.slider[2].set_value(0.4)
 at.run()
 assert any("settings" in str(w.value).lower() for w in at.warning), "mismatch warning missing"
-at.sidebar.slider[0].set_value(0.25)
+at.sidebar.slider[2].set_value(0.25)
 at.run()
 
 # --- tab 3: robustness sweeps incl. dilution
 buttons = {b.label: b for b in at.button}
-buttons["Run robustness sweeps"].click()
+buttons["Attack this text"].click()
 at.run()
 assert not at.exception, at.exception
 assert len(at.dataframe) == 4
@@ -76,6 +78,8 @@ print(f"dilution ok: whole-doc z falls to {full.z.min():.2f}, WinMax holds at {w
 # --- paraphrase before/after box scores both sides
 metrics_before = len(at.metric)
 at.text_area(key="para_text").set_value(open("samples/human_control.txt").read())
+buttons = {b.label: b for b in at.button}
+buttons["Score my paraphrase"].click()
 at.run()
 assert not at.exception, at.exception
 assert len(at.metric) >= metrics_before + 6, "paraphrase comparison metrics missing"
